@@ -4,3 +4,11 @@ supabase
 pydantic-settings
 python-dotenv
 psycopg2
+torch
+transformers
+opencv-python
+matplotlib
+numpy
+pillow
+pandas
+python-multipart
