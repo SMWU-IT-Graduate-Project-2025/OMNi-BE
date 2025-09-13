@@ -186,7 +186,7 @@ async def vlm_inference(
         # )
         return InferenceResponse(
             success=True,
-            event_detected=alert, # bool
+            event_detected=alert,  # 새로운 이벤트 발생 여부
             similarity_score=current_similarity,
             query_label=query_label,
             query_text=query,
