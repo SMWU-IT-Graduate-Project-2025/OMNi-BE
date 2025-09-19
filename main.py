@@ -19,6 +19,7 @@ from typing import Dict, Optional
 # 프레임 간 유사도 변화 추적을 위한 전역 변수
 previous_similarities: Dict[str, float] = {}  # {query_label: previous_similarity}
 frame_count: Dict[str, int] = {}  # {query_label: frame_count}
+event_active: Dict[str, bool] = {}
 
 # init models
 t_model = CLIPTextModelWithProjection.from_pretrained("Searchium-ai/clip4clip-webvid150k")
@@ -57,6 +58,7 @@ app.add_middleware(
 class InferenceResponse(BaseModel):
     success: bool
     event_detected: bool
+    event_active: bool
     similarity_score: float
     query_label: str
     query_text: str
@@ -150,27 +152,41 @@ async def vlm_inference(
         frame_count[query_label] += 1
         
         # 알람 판단 로직
-        alert = False
         
+        # 임계값 정의
+        similarity_threshold = 0.2   # 유지 여부 판단 (브이 계속 유지되는 동안 감지 ON)
+        gap_threshold = 0.05         # 순간 변화 판단 (새 이벤트 트리거)
+
+
+        alert = False
+        event_status = "none"     # active / none
+        previous_similarity = previous_similarities.get(query_label, 0.0)
+        similarity_gap = current_similarity - previous_similarity
+        
+        # 첫 프레임은 판단 스킵
         if frame_count[query_label] == 1:
-            # 첫 번째 프레임: 판단 스킵
-            alert = False
             logger.info(f"First frame for {query_label}: Skipping alert")
+            alert = False
         else:
-            # 이전 프레임과 비교
-            if query_label in previous_similarities:
-                previous_similarity = previous_similarities[query_label]
-                similarity_gap = current_similarity - previous_similarity
-                
-                # 유사도 증가 임계값 (gap threshold)
-                gap_threshold = 0.05  # 이전 프레임 대비 gap 이상 증가해야 알람
-                
-                if similarity_gap >= gap_threshold:
-                    alert = True
-                    logger.info(f"Alert triggered: Gap {similarity_gap:.4f} >= {gap_threshold}")
+            # 1. gap과 similarity 모두 만족 → 새 이벤트 발생
+            if (similarity_gap >= gap_threshold 
+                and current_similarity >= similarity_threshold 
+                and not event_active.get(query_label, False)):   # 아직 활성화 안된 경우만
+                alert = True
+                event_status = "active"
+                event_active[query_label] = True
+                logger.info(f"New event triggered for {query_label}")
+
+            # 2. 이미 발생한 이벤트 유지 중
+            elif event_active.get(query_label, False):
+                if current_similarity >= similarity_threshold:
+                    alert = False                 # 유지 중엔 알림 찍지 말고
+                    event_status = "active"       # ongoing 대신 active
+                    logger.info(f"Event still active for {query_label}")
                 else:
-                    alert = False
-                    logger.info(f"No alert: Gap {similarity_gap:.4f} < {gap_threshold}")
+                    event_active[query_label] = False
+                    event_status = "none"
+                    logger.info(f"Event ended for {query_label}")
         
         # 현재 유사도를 다음 프레임을 위해 저장
         previous_similarities[query_label] = current_similarity
@@ -187,11 +203,14 @@ async def vlm_inference(
         return InferenceResponse(
             success=True,
             event_detected=alert, # bool
+            event_active=event_active.get(query_label, False),
             similarity_score=current_similarity,
             query_label=query_label,
             query_text=query,
-            message=f"이벤트 {'감지됨' if alert else '감지되지 않음'}",
-            threshold=gap_threshold
+            message=(
+        "이벤트 새로 감지됨" if alert 
+        else ("이벤트 유지 중" if event_active.get(query_label, False) else "이벤트 감지되지 않음")),
+            threshold=similarity_threshold
         )
 
     except Exception as e:
