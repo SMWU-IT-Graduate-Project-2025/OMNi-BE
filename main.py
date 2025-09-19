@@ -15,11 +15,14 @@ from core.image_utils import (
     calculate_image_demo_similarity
 )
 from typing import Dict, Optional
+from collections import deque
 
 # 프레임 간 유사도 변화 추적을 위한 전역 변수
 previous_similarities: Dict[str, float] = {}  # {query_label: previous_similarity}
 frame_count: Dict[str, int] = {}  # {query_label: frame_count}
+
 event_active: Dict[str, bool] = {}
+frame_queues: Dict[str, deque] = {}  # {query_label: frame_queue}
 
 # init models
 t_model = CLIPTextModelWithProjection.from_pretrained("Searchium-ai/clip4clip-webvid150k")
@@ -132,8 +135,14 @@ async def vlm_inference(
         # 이미지 전처리
         image_tensor = preprocess_image(image_bytes)
         
-        # 이미지 임베딩 추출
-        image_embedding = get_image_embedding(image_tensor, v_model)
+        # 프레임 큐 초기화 (첫 번째 프레임인 경우)
+        if query_label not in frame_queues:
+            frame_queues[query_label] = deque(maxlen=6)  # 윈도우 크기 6
+        
+        # 이미지 임베딩 추출 (큐 기반 연속된 프레임 처리)
+        image_embedding, frame_queues[query_label] = get_image_embedding(
+            image_tensor, v_model, frame_queues[query_label], window_size=6
+        )
         
         # 데모 이벤트 임베딩과의 유사도 계산
         demo_embedding = event_loader.get_embedding_by_query_label(query_label)
@@ -155,7 +164,7 @@ async def vlm_inference(
         
         # 임계값 정의
         similarity_threshold = 0.2   # 유지 여부 판단 (브이 계속 유지되는 동안 감지 ON)
-        gap_threshold = 0.05         # 순간 변화 판단 (새 이벤트 트리거)
+        gap_threshold = 0.03         # 순간 변화 판단 (새 이벤트 트리거)
 
 
         alert = False
@@ -195,11 +204,6 @@ async def vlm_inference(
         logger.info(f"Query: {query}, Label: {query_label}")
         logger.info(f"Frame: {frame_count[query_label]}, Similarity: {current_similarity:.4f}, Alert: {alert}")
         
-        # return InferenceResponse(
-        #     similarity=current_similarity,
-        #     event=query_label,
-        #     alert=alert
-        # )
         return InferenceResponse(
             success=True,
             event_detected=alert, # bool

@@ -2,8 +2,9 @@ from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normal
 from PIL import Image
 import torch
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Optional
 import io
+from collections import deque
 
 def preprocess_image(image_bytes: bytes, size: int = 224) -> torch.Tensor:
     """
@@ -32,29 +33,53 @@ def preprocess_image(image_bytes: bytes, size: int = 224) -> torch.Tensor:
     
     return image_tensor
 
-def get_image_embedding(image_tensor: torch.Tensor, vision_model) -> torch.Tensor:
+def get_image_embedding(image_tensor: torch.Tensor, vision_model, frame_queue: Optional[deque] = None, window_size: int = 6) -> Tuple[torch.Tensor, deque]:
     """
-    이미지 텐서에서 임베딩을 추출
+    이미지 텐서에서 임베딩을 추출하고 큐 기반 연속된 프레임 임베딩 처리
     
     Args:
         image_tensor: 전처리된 이미지 텐서 [1, 3, 224, 224]
         vision_model: CLIP 비전 모델
+        frame_queue: 프레임 임베딩 큐 (Optional)
+        window_size: 슬라이딩 윈도우 크기 (기본값: 6)
         
     Returns:
-        이미지 임베딩 텐서 [1, embedding_dim]
+        Tuple[torch.Tensor, deque]: (현재 프레임 임베딩 또는 윈도우 풀링된 임베딩, 업데이트된 프레임 큐)
     """
     # 모델의 디바이스로 이동 (CUDA, MPS, 또는 CPU)
     device = next(vision_model.parameters()).device
     image_tensor = image_tensor.to(device)
     
     with torch.no_grad():
-        # 이미지 임베딩 추출
-        image_embedding = vision_model(pixel_values=image_tensor)["image_embeds"]
+        # 현재 프레임 임베딩 추출
+        current_embedding = vision_model(pixel_values=image_tensor)["image_embeds"]  # [1, dim]
+        current_embedding = current_embedding.squeeze(0)  # [dim]
         
         # 정규화
-        image_embedding = image_embedding / image_embedding.norm(dim=-1, keepdim=True)
+        current_embedding = current_embedding / current_embedding.norm(dim=-1, keepdim=True)
     
-    return image_embedding
+    # 프레임 큐 초기화 (첫 번째 호출인 경우)
+    if frame_queue is None:
+        frame_queue = deque(maxlen=window_size)
+    
+    # 현재 프레임 임베딩을 큐에 추가
+    frame_queue.append(current_embedding)
+    
+    # 윈도우 크기만큼 프레임이 쌓이지 않았으면 현재 프레임만 반환
+    if len(frame_queue) < window_size:
+        return current_embedding.unsqueeze(0), frame_queue  # [1, dim]
+    
+    # 슬라이딩 윈도우 mean pooling
+    # 큐의 모든 임베딩을 스택으로 변환
+    window_embeddings = torch.stack(list(frame_queue))  # [window_size, dim]
+    
+    # 윈도우 내 임베딩들의 평균 계산
+    pooled_embedding = window_embeddings.mean(dim=0)  # [dim]
+    
+    # 윈도우별 정규화
+    pooled_embedding = pooled_embedding / pooled_embedding.norm(dim=-1, keepdim=True)
+    
+    return pooled_embedding.unsqueeze(0), frame_queue  # [1, dim]
 
 def get_text_embedding(text: str, text_model, tokenizer) -> torch.Tensor:
     """
@@ -108,7 +133,7 @@ def calculate_image_demo_similarity(image_embedding: torch.Tensor, demo_embeddin
     이미지 임베딩과 데모 이벤트 임베딩 간의 코사인 유사도 계산
     
     Args:
-        image_embedding: 이미지 임베딩 [1, embedding_dim]
+        image_embedding: 이미지 임베딩 [1, embedding_dim] (단일 프레임 또는 윈도우 풀링된 임베딩)
         demo_embedding: 데모 이벤트 임베딩 [embedding_dim]
         
     Returns:
