@@ -1,7 +1,8 @@
 # OMNi-BE
 
-<img src='https://i.ifh.cc/yHzGZf.png'><br>
+<img src='https://i.ifh.cc/yHzGZf.png' width=400><br>
 
+## Environment Setup
 ```
 conda create -n omni python=3.11 -y
 
