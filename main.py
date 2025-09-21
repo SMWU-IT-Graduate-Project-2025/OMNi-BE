@@ -14,7 +14,9 @@ from core.image_utils import (
     get_image_embedding, 
     calculate_image_demo_similarity
 )
+from core.onnx_utils import load_onnx_vision_model
 from typing import Dict, Optional
+import time
 
 # 프레임 간 유사도 변화 추적을 위한 전역 변수
 previous_similarities: Dict[str, float] = {}  # {query_label: previous_similarity}
@@ -22,10 +24,16 @@ frame_count: Dict[str, int] = {}  # {query_label: frame_count}
 event_active: Dict[str, bool] = {}
 
 # init models
-t_model = CLIPTextModelWithProjection.from_pretrained("Searchium-ai/clip4clip-webvid150k")
-tokenizer = CLIPTokenizer.from_pretrained("Searchium-ai/clip4clip-webvid150k")
-v_model = CLIPVisionModelWithProjection.from_pretrained("Searchium-ai/clip4clip-webvid150k")
-v_model = v_model.eval()
+model_name = "Searchium-ai/clip4clip-webvid150k" #"taett/omni" 
+t_model = CLIPTextModelWithProjection.from_pretrained(model_name)
+tokenizer = CLIPTokenizer.from_pretrained(model_name)
+# v_model = CLIPVisionModelWithProjection.from_pretrained(model_name)
+# v_model = v_model.eval()
+
+# ONNX 비전 모델 로드
+# onnx_model_path = "./core/onnx_vision"
+onnx_model_path = "./onnx_vision_re_re/model.onnx"
+v_model = load_onnx_vision_model(onnx_model_path)
 
 # GPU 사용 가능한 경우 GPU로 이동 (CUDA 또는 MPS)
 if torch.cuda.is_available():
@@ -34,7 +42,7 @@ if torch.cuda.is_available():
     print("Models loaded on CUDA GPU")
 elif torch.backends.mps.is_available():
     t_model = t_model.to('mps')
-    v_model = v_model.to('mps')
+    # v_model = v_model.to('mps')
     print("Models loaded on MPS (Apple Silicon GPU)")
 else:
     print("Models loaded on CPU")
@@ -121,6 +129,9 @@ async def vlm_inference(
     Returns:
         InferenceResponse: 이벤트 감지 결과
     """
+    # 함수 실행 시간 측정 시작
+    start_time = time.time()
+    
     try:
         # 이미지 파일 검증
         if not image.content_type.startswith('image/'):
@@ -191,9 +202,17 @@ async def vlm_inference(
         # 현재 유사도를 다음 프레임을 위해 저장
         previous_similarities[query_label] = current_similarity
         
+        # 함수 실행 시간 측정 종료 및 출력
+        end_time = time.time()
+        execution_time = end_time - start_time
+        
         # 로깅
         logger.info(f"Query: {query}, Label: {query_label}")
         logger.info(f"Frame: {frame_count[query_label]}, Similarity: {current_similarity:.4f}, Alert: {alert}")
+        logger.info(f"vlm_inference 실행 시간: {execution_time:.4f}초")
+        
+        # 터미널에 실행 시간 출력
+        print(f"🚀 vlm_inference 함수 실행 시간: {execution_time:.4f}초 (Query: {query_label})")
         
         # return InferenceResponse(
         #     similarity=current_similarity,
@@ -214,6 +233,11 @@ async def vlm_inference(
         )
 
     except Exception as e:
+        # 에러 발생 시에도 실행 시간 측정
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"❌ vlm_inference 함수 실행 시간: {execution_time:.4f}초 (에러 발생)")
+        
         logger.error(f"Error in VLM inference: {str(e)}")
         raise HTTPException(status_code=500, detail=f"이벤트 감지 중 오류가 발생했습니다: {str(e)}")
 

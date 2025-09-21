@@ -12,3 +12,6 @@ numpy
 pillow
 pandas
 python-multipart
+optimum
+onnxruntime
+onnx

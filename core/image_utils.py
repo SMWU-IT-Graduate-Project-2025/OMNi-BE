@@ -32,29 +32,73 @@ def preprocess_image(image_bytes: bytes, size: int = 224) -> torch.Tensor:
     
     return image_tensor
 
-def get_image_embedding(image_tensor: torch.Tensor, vision_model) -> torch.Tensor:
-    """
-    이미지 텐서에서 임베딩을 추출
+# def get_image_embedding(image_tensor: torch.Tensor, vision_model) -> torch.Tensor:
+#     """
+#     이미지 텐서에서 임베딩을 추출
     
-    Args:
-        image_tensor: 전처리된 이미지 텐서 [1, 3, 224, 224]
-        vision_model: CLIP 비전 모델
+#     Args:
+#         image_tensor: 전처리된 이미지 텐서 [1, 3, 224, 224]
+#         vision_model: CLIP 비전 모델
         
-    Returns:
-        이미지 임베딩 텐서 [1, embedding_dim]
-    """
-    # 모델의 디바이스로 이동 (CUDA, MPS, 또는 CPU)
-    device = next(vision_model.parameters()).device
-    image_tensor = image_tensor.to(device)
+#     Returns:
+#         이미지 임베딩 텐서 [1, embedding_dim]
+#     """
+#     # 모델의 디바이스로 이동 (CUDA, MPS, 또는 CPU)
+#     device = next(vision_model.parameters()).device
+#     image_tensor = image_tensor.to(device)
     
-    with torch.no_grad():
-        # 이미지 임베딩 추출
-        image_embedding = vision_model(pixel_values=image_tensor)["image_embeds"]
+#     with torch.no_grad():
+#         # 이미지 임베딩 추출
+#         image_embedding = vision_model(pixel_values=image_tensor)["image_embeds"]
         
-        # 정규화
-        image_embedding = image_embedding / image_embedding.norm(dim=-1, keepdim=True)
+#         # 정규화
+#         image_embedding = image_embedding / image_embedding.norm(dim=-1, keepdim=True)
     
-    return image_embedding
+#     return image_embedding
+def get_image_embedding(image_tensor, vision_model):
+    """
+    PyTorch 또는 ONNXVisionModel에서 이미지 임베딩 추출
+    """
+    if hasattr(vision_model, "get_image_embedding"):
+        # ONNXVisionModel 클래스가 제공하는 메서드 사용
+        return vision_model.get_image_embedding(image_tensor)
+    else:
+        # PyTorch CLIP VisionModel 사용
+        device = next(vision_model.parameters()).device
+        image_tensor = image_tensor.to(device)
+        with torch.no_grad():
+            image_embedding = vision_model(pixel_values=image_tensor)["image_embeds"]
+            image_embedding = image_embedding / image_embedding.norm(dim=-1, keepdim=True)
+        return image_embedding
+
+
+# import onnxruntime as ort
+# def get_image_embedding_onnx(image_tensor: np.ndarray, vision_model):
+#     """
+#     이미지 텐서에서 임베딩을 추출 (PyTorch or ONNX)
+    
+#     Args:
+#         image_tensor: 전처리된 이미지 텐서 (np.ndarray or torch.Tensor) [1, 3, 224, 224]
+#         vision_model: ONNX InferenceSession 또는 PyTorch 모델
+        
+#     Returns:
+#         이미지 임베딩 [1, embedding_dim]
+#     """
+#     # ONNX 입력 이름 확인
+#     input_name = vision_model.get_inputs()[0].name
+#     ort_inputs = {input_name: image_tensor}
+    
+#     # 추론 실행
+#     ort_outputs = vision_model.run(None, ort_inputs)
+    
+#     # 보통 첫 번째 출력이 image_embeds
+#     image_embedding = ort_outputs[0]
+    
+#     # 정규화
+#     norm = np.linalg.norm(image_embedding, axis=-1, keepdims=True)
+#     image_embedding = image_embedding / norm
+#     return image_embedding
+
 
 def get_text_embedding(text: str, text_model, tokenizer) -> torch.Tensor:
     """
