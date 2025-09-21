@@ -1,6 +1,6 @@
 # OMNi-BE
 
-<img src='/Users/jisu/Desktop/dev/grad-cctv/OMNi-BE/logo-final-omni_full_bg.png'><br>
+<img src='https://i.ifh.cc/yHzGZf.png'><br>
 
 ```
 conda create -n omni python=3.11 -y
